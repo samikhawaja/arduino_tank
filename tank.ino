@@ -7,13 +7,10 @@ the L293D chip
 ************************/
 
 #define IR_ENABLE 1
-#define SR_ENABLE 0
+#define SR_ENABLE 1
 
-#if IR_ENABLE
 #include "IRremote.h"
-
 #define RECIEVER 8
-#endif
 
 #define RIGHTA 6
 #define RIGHTB 5
@@ -23,14 +20,18 @@ the L293D chip
 #define LEFTB 3
 #define LEFTEN 4
 
+#define SERVO_PIN 9
+
 #if SR_ENABLE
-int i;
+//int i;
 #include "SR04.h"
-#define TRIG_PIN 12
-#define ECHO_PIN 11
-SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
-long a;
+#define TRIG_PIN 11
+#define ECHO_PIN 10
+//SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
+//long a;
 #endif
+
+#include <Servo.h>
 
 enum dir_t {
   DIR_UNKNOWN = 0,
@@ -66,7 +67,39 @@ motor_t left {
   .en = LEFTEN,
 };
 
-#if IR_ENABLE
+typedef struct {
+  SR04 sr04;
+} sr_sensor_t;
+
+typedef struct {
+  int servo_pin;
+  sr_sensor_t eyes;
+  turn_t orientation;
+  Servo servo;
+} head_t;
+
+enum function_t {
+  FUNCTION_UNKNOWN = 0,
+  FUNCTION_REMOTE,
+  FUNCTION_EYES,
+  FUNCTION_FOLLOW_LIGHT,
+};
+
+typedef struct {
+  head_t head;
+  function_t function;
+} robot_t;
+
+robot_t robot {
+  .head = {
+    .servo_pin = SERVO_PIN,
+    .eyes = {
+      .sr04 = SR04(ECHO_PIN,TRIG_PIN),
+    },
+    .orientation = TURN_UNKNOWN,
+  },
+  .function = FUNCTION_REMOTE,
+};
 
 enum BUTTON_T {
   BUTTON_UNKNOWN = 0,
@@ -162,7 +195,33 @@ BUTTON_T remote_read_button(remote_t *remote) {
 
   return remote->last_button;
 }
-#endif
+
+long sr_distance(sr_sensor_t *sensor) {
+  return sensor->sr04.Distance();
+}
+
+void head_setup(head_t *head) {
+  head->servo.attach(head->servo_pin);
+}
+
+void head_turn(head_t *head, turn_t towards) {
+  head->orientation = towards;
+  int angle = 90;
+  switch(towards) {
+    case LEFT:
+      angle = 180;
+    break;
+    case RIGHT:
+      angle = 0;
+    break;
+  }
+  head->servo.write(angle);
+}
+
+long head_distance(head_t *head, turn_t towards) {
+  head_turn(head, towards);
+  return sr_distance(&head->eyes);
+}
 
 void motor_set_speed(motor_t *motor, int speed) {
   motor->speed = speed;
@@ -212,8 +271,13 @@ void set_direction(dir_t dir) {
   motor_set_speed(&left, 255);
 }
 
-void do_action() {
-#if IR_ENABLE  
+void do_setup(robot_t *robot) {
+  setup_motor(&right);
+  setup_motor(&left);
+  head_setup(&robot->head);
+}
+
+void do_remote_action() {
   //irrecv.enableIRIn(); // Start the receiver
   BUTTON_T buttonpress = remote_read_button(&tvremote);
   
@@ -244,118 +308,22 @@ void do_action() {
 //    Serial.println("stop");
     stopit();
   }
-  
-#endif
+}
+
+void do_eyes_action(robot_t *robot) {
+  long dis = head_distance(&robot->head, TURN_UNKNOWN);
+  Serial.println(dis);
 }
 
 int readvolt = 500;
 void setup() {
-  //---set pin direction
-//  pinMode(RIGHTEN,OUTPUT);
-//  pinMode(RIGHTA,OUTPUT);
-//  pinMode(RIGHTB,OUTPUT);
-
-  setup_motor(&right);
-  setup_motor(&left);
-  
-  Serial.begin(9600);
-#if IR_ENABLE  
-  //irrecv.enableIRIn(); // Start the receiver
+  Serial.begin(9600); 
+  do_setup(&robot);
   remote_setup(&tvremote);
-#endif
-//  digitalWrite(RIGHTA,HIGH); //one way
-//  digitalWrite(RIGHTB,LOW);
-//  digitalWrite(ENABLE,LOW); // enable on
 }
+
 void loop() {
-//  motor_set_speed(&right, 255);
-//  motor_set_speed(&left, 255);
-//  delay(2000);
-////  set_direction(BACKWARD);
-////  delay(4000);
-////  set_direction(FORWARD);
-//  turn(LEFT);
-//  delay(2000);
-//  turn(RIGHT);
-//  delay(2000);
-
-#if IR_ENABLE
-  //int op = getRemote();
-  //remote_read_button(&tvremote);
-  do_action();
-#endif
-
-//  if (readvolt-- <= 0) {
-//  // read the input on analog pin 0:
-//    int lsensorValue = analogRead(A0);
-//    int rsensorValue = analogRead(A1);
-//    // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
-//    float lvoltage = lsensorValue * (5.0 / 1023.0);
-//    float rvoltage = rsensorValue * (5.0 / 1023.0);
-//    // print out the value you read:
-//    Serial.print(lvoltage);
-//    Serial.print("  ");
-//    Serial.println(rvoltage);
-//    readvolt = 10000;
-//  }
-
-//  motor_set_direction(motor, FORWARD);
-
-  
-  //---back and forth example 
-  //analogWrite(ENABLE,255); //enable on    
-//   Serial.println("forward");
-//
-//  digitalWrite(RIGHTA,HIGH);  //reverse
-//  digitalWrite(RIGHTB,LOW);  
-//  digitalWrite(RIGHTEN,HIGH); // enable on
-//  delay(2000);
-//  digitalWrite(ENABLE,LOW); // enable on
-//  delay(1000);
-//  Serial.println("now reverse");    
-//  digitalWrite(DIRA,LOW);  //reverse
-//  digitalWrite(DIRB,HIGH);
-//  digitalWrite(ENABLE,HIGH); // enable on
-//  delay(2000);    
-//  digitalWrite(ENABLE,LOW); // enable on
-//  delay(1000);    
-//  digitalWrite(ENABLE,LOW); // disable
-//  delay(2000);
-//
-//  Serial.println("fast Slow example");
-//  //---fast/slow stop example
-//  digitalWrite(ENABLE,HIGH); //enable on
-//  digitalWrite(DIRA,HIGH); //one way
-//  digitalWrite(DIRB,LOW);
-//  delay(3000);
-//  digitalWrite(ENABLE,LOW); //slow stop
-//  delay(1000);
-//  digitalWrite(ENABLE,HIGH); //enable on
-//  digitalWrite(DIRA,LOW); //one way
-//  digitalWrite(DIRB,HIGH);
-//  delay(3000);
-//  digitalWrite(DIRA,LOW); //fast stop
-//  delay(2000);
-//
-//  Serial.println("PWM full then slow");
-//  //---PWM example, full speed then slow
-//  analogWrite(ENABLE,255); //enable on
-//  digitalWrite(DIRA,HIGH); //one way
-//  digitalWrite(DIRB,LOW);
-//  delay(2000);
-//  analogWrite(ENABLE,180); //half speed
-//  delay(2000);
-//  analogWrite(ENABLE,128); //half speed
-//  delay(2000);
-//  analogWrite(ENABLE,50); //half speed
-//  delay(2000);
-//  analogWrite(ENABLE,128); //half speed
-//  delay(2000);
-//  analogWrite(ENABLE,180); //half speed
-//  delay(2000);
-//  analogWrite(ENABLE,255); //half speed
-//  delay(2000);
-//  digitalWrite(ENABLE,LOW); //all done
-//  delay(10000);
+  //do_remote_action();
+  do_eyes_action(&robot);
 }
    
