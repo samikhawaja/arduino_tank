@@ -30,6 +30,7 @@ the L293D chip
 //SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
 //long a;
 #endif
+#define MAX_DISTANCE 1500;
 
 #include <Servo.h>
 
@@ -257,16 +258,17 @@ void setup_motor(motor_t *motor) {
 }
 
 void turn(turn_t towards) {
+  const int turn_speed = 128;
   motor_set_direction(&right, FORWARD);
   motor_set_direction(&left, FORWARD);
   switch (towards) {
     case LEFT:
       motor_set_speed(&left, 0);
-      motor_set_speed(&right, 255);
+      motor_set_speed(&right, turn_speed);
     break;
     case RIGHT:
     motor_set_speed(&right, 0);
-    motor_set_speed(&left, 255);
+    motor_set_speed(&left, turn_speed);
     break;
   }
 }
@@ -320,12 +322,24 @@ void do_remote_action(BUTTON_T buttonpress) {
   }
 }
 
+bool is_turning_blocked(long dis) {
+  return (dis < 10 || dis > 1500);
+}
+
+bool is_blocked(long dis) {
+  return (dis < 10 || dis > 1500);
+}
+
+bool can_turn(long dis) {
+  return (dis >=20 && dis <= 1500);
+}
+
 void do_eyes_action(robot_t *robot) {
   long dis;
   if (robot->turning != TURN_UNKNOWN) {
       turn_t other_side = (robot->turning == LEFT)?RIGHT:LEFT;
       dis = head_distance(&robot->head, other_side, robot->turning_degree);
-      if (dis < 20) {
+      if (is_turning_blocked(dis)) {
         return;
       }
 
@@ -349,13 +363,13 @@ void do_eyes_action(robot_t *robot) {
   Serial.println(dis);
 
   /* cannot go forward */
-  if (dis <= 10) {
+  if (is_blocked(dis)) {
     stopit();
     dis = head_distance(&robot->head, LEFT, 90);
     Serial.print("left: ");
     Serial.println(dis);
 
-    if (dis >= 20) {
+    if (can_turn(dis)) {
       /* going left */
       robot->turning = LEFT;
       robot->turning_degree = 0;
@@ -366,7 +380,7 @@ void do_eyes_action(robot_t *robot) {
       Serial.print("Right: ");
       Serial.println(dis);
 
-      if (dis >= 20) {
+      if (can_turn(dis)) {
         Serial.println("Going Right");
         robot->turning = RIGHT;
         robot->turning_degree = 0;
@@ -385,10 +399,9 @@ void setup() {
 }
 
 void loop() {
-//  long dis = head_distance(&robot.head, TURN_UNKNOWN);
+//  long dis = head_distance(&robot.head, TURN_UNKNOWN, 0);
 //  Serial.print("forward: ");
 //  Serial.println(dis);
-//
 //  return;
 
   BUTTON_T buttonpress = remote_read_button(&tvremote);
