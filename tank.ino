@@ -75,6 +75,7 @@ typedef struct {
   int servo_pin;
   sr_sensor_t eyes;
   turn_t orientation;
+  int degree;
   Servo servo;
 } head_t;
 
@@ -89,6 +90,7 @@ typedef struct {
   head_t head;
   function_t function;
   turn_t turning;
+  int turning_degree;
 } robot_t;
 
 robot_t robot {
@@ -206,26 +208,30 @@ void head_setup(head_t *head) {
   head->servo.attach(head->servo_pin);
 }
 
-void head_turn(head_t *head, turn_t towards) {
-  bool dodelay = (head->orientation != towards);
+void head_turn(head_t *head, turn_t towards, int degree) {
+  bool dodelay = (head->orientation != towards) || (head->degree != degree);
   head->orientation = towards;
+  head->degree = degree;
   int angle = 90;
   switch(towards) {
     case LEFT:
-      angle = 180;
+      angle = 90 + degree;
     break;
     case RIGHT:
-      angle = 0;
+      angle = 90 - degree;
     break;
+    default:
+      head->degree = 0;
   }
-  head->servo.write(angle);
 
-  if (dodelay)
-    delay(1000);
+  if (dodelay) {
+    head->servo.write(angle);
+    delay(500);
+  }
 }
 
-long head_distance(head_t *head, turn_t towards) {
-  head_turn(head, towards);  
+long head_distance(head_t *head, turn_t towards, int degree) {
+  head_turn(head, towards, degree);  
   return sr_distance(&head->eyes);
 }
 
@@ -317,43 +323,56 @@ void do_remote_action(BUTTON_T buttonpress) {
 void do_eyes_action(robot_t *robot) {
   long dis;
   if (robot->turning != TURN_UNKNOWN) {
-      dis = head_distance(&robot->head, TURN_UNKNOWN);
-      if (dis < 50) {
-        return;        
+      turn_t other_side = (robot->turning == LEFT)?RIGHT:LEFT;
+      dis = head_distance(&robot->head, other_side, robot->turning_degree);
+      if (dis < 20) {
+        return;
       }
+
+      if (robot->turning_degree < 75) {
+        robot->turning_degree += 15;
+        stopit();
+        dis = head_distance(&robot->head, other_side, robot->turning_degree);
+        turn(robot->turning);
+        return;
+      }
+
+      robot->turning_degree = 0;
       robot->turning = TURN_UNKNOWN;
       set_direction(FORWARD);
       Serial.println("Stop.. now go forward");
   }
 
   /* can go forward */
-  dis = head_distance(&robot->head, TURN_UNKNOWN);
+  dis = head_distance(&robot->head, TURN_UNKNOWN, 0);
   Serial.print("forward: ");
   Serial.println(dis);
 
   /* cannot go forward */
-  if (dis <= 20) {
+  if (dis <= 10) {
     stopit();
-    dis = head_distance(&robot->head, LEFT);
+    dis = head_distance(&robot->head, LEFT, 90);
     Serial.print("left: ");
     Serial.println(dis);
 
-    if (dis >= 50) {
+    if (dis >= 20) {
       /* going left */
       robot->turning = LEFT;
+      robot->turning_degree = 0;
       turn(LEFT);      
       Serial.println("Going Left");
     } else {
-      dis = head_distance(&robot->head, RIGHT);
+      dis = head_distance(&robot->head, RIGHT, 90);
       Serial.print("Right: ");
       Serial.println(dis);
 
-      if (dis >= 50) {
+      if (dis >= 20) {
         Serial.println("Going Right");
         robot->turning = RIGHT;
+        robot->turning_degree = 0;
         turn(RIGHT);
       }
-    }    
+    }
 //    stop();
   }
 }
@@ -366,6 +385,12 @@ void setup() {
 }
 
 void loop() {
+//  long dis = head_distance(&robot.head, TURN_UNKNOWN);
+//  Serial.print("forward: ");
+//  Serial.println(dis);
+//
+//  return;
+
   BUTTON_T buttonpress = remote_read_button(&tvremote);
 
   switch(buttonpress) {
