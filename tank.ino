@@ -10,27 +10,29 @@ the L293D chip
 #define SR_ENABLE 1
 
 #include "IRremote.h"
-#define RECIEVER 8
+#define RECIEVER 11
 
-#define RIGHTA 6
-#define RIGHTB 5
-#define RIGHTEN 7
+#define RIGHTA 10
+#define RIGHTB 3
+#define RIGHTEN 2
 
-#define LEFTA 2
-#define LEFTB 3
-#define LEFTEN 4
+#define LEFTA 4
+#define LEFTB 8
+#define LEFTEN 9
 
-#define SERVO_PIN 9
+#define SERVO_PIN 7
 
 #if SR_ENABLE
 //int i;
 #include "SR04.h"
-#define TRIG_PIN 11
-#define ECHO_PIN 10
+#define TRIG_PIN 12
+#define ECHO_PIN 13
 //SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
 //long a;
 #endif
-#define MAX_DISTANCE 1500;
+#define MAX_DISTANCE 5000
+
+unsigned long CIRCLE_TURN_AFTER = 2000;
 
 #include <Servo.h>
 
@@ -84,6 +86,7 @@ enum function_t {
   FUNCTION_UNKNOWN = 0,
   FUNCTION_REMOTE,
   FUNCTION_EYES,
+  FUNCTION_EYES_CIRCLE,
   FUNCTION_FOLLOW_LIGHT,
 };
 
@@ -92,6 +95,7 @@ typedef struct {
   function_t function;
   turn_t turning;
   int turning_degree;
+  unsigned long time_since_turn;
 } robot_t;
 
 robot_t robot {
@@ -115,6 +119,14 @@ enum BUTTON_T {
   FAST_BACK,
   FAST_FORWARD,
   NUM_1,
+  NUM_2,
+  NUM_3,
+  NUM_4,
+  NUM_5,
+  NUM_6,
+  NUM_7,
+  NUM_8,
+  NUM_9,
 };
 
 typedef struct {  
@@ -148,14 +160,14 @@ BUTTON_T remote_button_type(remote_t *remote) {
   case 0xFFB04F: Serial.println("ST/REPT");    break;
   case 0xFF6897: Serial.println("0");    break;
   case 0xFF30CF: ret = NUM_1; Serial.println("1");    break;
-  case 0xFF18E7: Serial.println("2");    break;
-  case 0xFF7A85: Serial.println("3");    break;
-  case 0xFF10EF: Serial.println("4");    break;
-  case 0xFF38C7: Serial.println("5");    break;
-  case 0xFF5AA5: Serial.println("6");    break;
-  case 0xFF42BD: Serial.println("7");    break;
-  case 0xFF4AB5: Serial.println("8");    break;
-  case 0xFF52AD: Serial.println("9");    break;
+  case 0xFF18E7: ret = NUM_2; Serial.println("2");    break;
+  case 0xFF7A85: ret = NUM_3; Serial.println("3");    break;
+  case 0xFF10EF: ret = NUM_4; Serial.println("4");    break;
+  case 0xFF38C7: ret = NUM_5; Serial.println("5");    break;
+  case 0xFF5AA5: ret = NUM_6; Serial.println("6");    break;
+  case 0xFF42BD: ret = NUM_7; Serial.println("7");    break;
+  case 0xFF4AB5: ret = NUM_8; Serial.println("8");    break;
+  case 0xFF52AD: ret = NUM_9; Serial.println("9");    break;
   case 0xFFFFFFFF: ret = remote->last_button;/* Serial.println(" REPEAT");*/break;  
 
   default: 
@@ -193,7 +205,7 @@ BUTTON_T remote_read_button(remote_t *remote) {
     remote->last_button_count = 0;
   } else if (remote->last_button != BUTTON_UNKNOWN
         && remote->last_button_count++ > 2500) {
-    Serial.println(" reseting last button   ");
+    //Serial.println(" reseting last button   ");
     remote->last_button = BUTTON_UNKNOWN;
     remote->last_button_count = 0;
   }
@@ -213,7 +225,7 @@ void head_turn(head_t *head, turn_t towards, int degree) {
   bool dodelay = (head->orientation != towards) || (head->degree != degree);
   head->orientation = towards;
   head->degree = degree;
-  int angle = 90;
+  int angle = 89;
   switch(towards) {
     case LEFT:
       angle = 90 + degree;
@@ -258,7 +270,7 @@ void setup_motor(motor_t *motor) {
 }
 
 void turn(turn_t towards) {
-  const int turn_speed = 128;
+  const int turn_speed = 255;
   motor_set_direction(&right, FORWARD);
   motor_set_direction(&left, FORWARD);
   switch (towards) {
@@ -323,68 +335,76 @@ void do_remote_action(BUTTON_T buttonpress) {
 }
 
 bool is_turning_blocked(long dis) {
-  return (dis < 10 || dis > 1500);
+  return (dis <= 5 || dis > MAX_DISTANCE);
 }
 
 bool is_blocked(long dis) {
-  return (dis < 10 || dis > 1500);
+  return (dis <= 7 || dis > MAX_DISTANCE);
 }
 
 bool can_turn(long dis) {
-  return (dis >=20 && dis <= 1500);
+  return (dis >=20 && dis <= MAX_DISTANCE);
 }
 
 void do_eyes_action(robot_t *robot) {
   long dis;
+  bool force_turn = false;
   if (robot->turning != TURN_UNKNOWN) {
       turn_t other_side = (robot->turning == LEFT)?RIGHT:LEFT;
       dis = head_distance(&robot->head, other_side, robot->turning_degree);
       if (is_turning_blocked(dis)) {
+        turn(robot->turning);
         return;
       }
 
-      if (robot->turning_degree < 75) {
+      if (robot->turning_degree <= 75) {
         robot->turning_degree += 15;
         stopit();
         dis = head_distance(&robot->head, other_side, robot->turning_degree);
-        turn(robot->turning);
         return;
       }
 
       robot->turning_degree = 0;
       robot->turning = TURN_UNKNOWN;
       set_direction(FORWARD);
-      Serial.println("Stop.. now go forward");
+      robot->time_since_turn = millis();
+      //Serial.println("Stop.. now go forwa rd");
+  } else if (robot->function == FUNCTION_EYES_CIRCLE) {
+    if ((robot->time_since_turn + CIRCLE_TURN_AFTER) <= millis()) {
+      force_turn = true;
+      robot->time_since_turn = millis();
+    }
   }
-
   /* can go forward */
   dis = head_distance(&robot->head, TURN_UNKNOWN, 0);
-  Serial.print("forward: ");
-  Serial.println(dis);
+  //Serial.print("forward: ");
+  //Serial.println(dis);
 
   /* cannot go forward */
-  if (is_blocked(dis)) {
+  if (is_blocked(dis) || force_turn) {
     stopit();
     dis = head_distance(&robot->head, LEFT, 90);
-    Serial.print("left: ");
-    Serial.println(dis);
+    //Serial.print("left: ");
+    //Serial.println(dis);
 
     if (can_turn(dis)) {
       /* going left */
       robot->turning = LEFT;
       robot->turning_degree = 0;
       turn(LEFT);      
-      Serial.println("Going Left");
+      robot->time_since_turn = millis();
+      //Serial.println("Going Left");
     } else {
       dis = head_distance(&robot->head, RIGHT, 90);
-      Serial.print("Right: ");
-      Serial.println(dis);
+      //Serial.print("Right: ");
+      //Serial.println(dis);
 
       if (can_turn(dis)) {
-        Serial.println("Going Right");
+        //Serial.println("Going Right");
         robot->turning = RIGHT;
         robot->turning_degree = 0;
         turn(RIGHT);
+        robot->time_since_turn = millis();
       }
     }
 //    stop();
@@ -400,11 +420,33 @@ void setup() {
 
 void loop() {
 //  long dis = head_distance(&robot.head, TURN_UNKNOWN, 0);
+//  dis = head_distance(&robot.head, LEFT, 90);
+//  dis = head_distance(&robot.head, TURN_UNKNOWN, 0);
 //  Serial.print("forward: ");
 //  Serial.println(dis);
 //  return;
+//
+// turn(RIGHT);
+//  stopit();
+//  return;
 
   BUTTON_T buttonpress = remote_read_button(&tvremote);
+
+  if (robot.function == FUNCTION_EYES_CIRCLE) {
+    switch (buttonpress) {
+      case NUM_1:
+      case NUM_2:
+      case NUM_3:
+      case NUM_4:
+      case NUM_5:
+      case NUM_6:
+      case NUM_7:
+      case NUM_8:
+      case NUM_9:
+        CIRCLE_TURN_AFTER = (buttonpress - NUM_1) * 1000;
+        buttonpress = 0;
+    }
+  }
 
   switch(buttonpress) {
     case POWER:
@@ -415,9 +457,16 @@ void loop() {
       robot.turning = TURN_UNKNOWN;
       robot.function = FUNCTION_EYES;
       set_direction(FORWARD);
+      break;
+    case NUM_2:
+      robot.turning = TURN_UNKNOWN;
+      robot.time_since_turn = 0;
+      robot.function = FUNCTION_EYES_CIRCLE;
+      set_direction(FORWARD);
   }
 
-  if (robot.function == FUNCTION_EYES) {
+  if (robot.function == FUNCTION_EYES
+        || robot.function == FUNCTION_EYES_CIRCLE) {
     do_eyes_action(&robot);  
   } else {
     do_remote_action(buttonpress);
