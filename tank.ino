@@ -10,23 +10,25 @@ the L293D chip
 #define SR_ENABLE 1
 
 #include "IRremote.h"
-#define RECIEVER 11
+#define RECIEVER 7
 
-#define RIGHTA 10
-#define RIGHTB 3
-#define RIGHTEN 2
+#define LIGHT_INPUT A3
 
-#define LEFTA 4
-#define LEFTB 8
-#define LEFTEN 9
+#define RIGHTA 12
+#define RIGHTB 4
+#define RIGHTEN 3
 
-#define SERVO_PIN 7
+#define LEFTA 5
+#define LEFTB 2
+#define LEFTEN 6
+
+#define SERVO_PIN 9
 
 #if SR_ENABLE
 //int i;
 #include "SR04.h"
-#define TRIG_PIN 12
-#define ECHO_PIN 13
+#define TRIG_PIN 10
+#define ECHO_PIN 11
 //SR04 sr04 = SR04(ECHO_PIN,TRIG_PIN);
 //long a;
 #endif
@@ -75,8 +77,13 @@ typedef struct {
 } sr_sensor_t;
 
 typedef struct {
+  int pin;
+} light_sensor_t;
+
+typedef struct {
   int servo_pin;
   sr_sensor_t eyes;
+  light_sensor_t lsensor;
   turn_t orientation;
   int degree;
   Servo servo;
@@ -103,6 +110,9 @@ robot_t robot {
     .servo_pin = SERVO_PIN,
     .eyes = {
       .sr04 = SR04(ECHO_PIN,TRIG_PIN),
+    },
+    .lsensor = {
+      .pin = LIGHT_INPUT,
     },
     .orientation = TURN_UNKNOWN,
   },
@@ -170,27 +180,14 @@ BUTTON_T remote_button_type(remote_t *remote) {
   case 0xFF52AD: ret = NUM_9; Serial.println("9");    break;
   case 0xFFFFFFFF: ret = remote->last_button;/* Serial.println(" REPEAT");*/break;  
 
-  default: 
+//  default: 
     //return -1;
-    Serial.println(" other button   ");
+//    Serial.println(" other button   ");
 
   }// End Case
 
   return ret;
 }
-
-//int getRemote() {
-//  int ret = -1;
-//  if (irrecv.decode(&results)) // have we received an IR signal?
-//
-//  {
-//    ret = check();//translateIR(); 
-////    Serial.println("button %d\n", ret);
-//    irrecv.resume(); // receive the next value
-//  }
-//
-//  return ret;
-//}
 
 void remote_setup(remote_t *remote) {
   remote->irrecv.enableIRIn(); // Start the receiver
@@ -215,6 +212,16 @@ BUTTON_T remote_read_button(remote_t *remote) {
 
 long sr_distance(sr_sensor_t *sensor) {
   return sensor->sr04.Distance();
+}
+
+int light_read(light_sensor_t *light) {
+  int val = 0;
+  int count = 50;
+  while (--count > 0) {
+    val = (val + analogRead(light->pin)) / 2;
+  }
+
+  return val;
 }
 
 void head_setup(head_t *head) {
@@ -248,6 +255,58 @@ long head_distance(head_t *head, turn_t towards, int degree) {
   return sr_distance(&head->eyes);
 }
 
+bool head_find_light(head_t *head, turn_t *towards) {
+  const int diff_thres = 80;
+  head_turn(head, LEFT, 90);
+  int left = light_read(&head->lsensor);
+  head_turn(head, TURN_UNKNOWN, 0);
+  int forward = light_read(&head->lsensor);
+  head_turn(head, RIGHT, 90);
+  int right = light_read(&head->lsensor);
+
+  int diff = left - right;
+  *towards = TURN_UNKNOWN;
+
+//  Serial.print(left);
+//  Serial.print(" ");
+//  Serial.print(right);
+//  Serial.print(" ");
+//  Serial.print(forward);
+//  Serial.print(" ");
+//  Serial.print("diff: ");
+//  Serial.print(diff);
+//  Serial.print(" ");
+
+  if (left < 5 && right < 5 && forward < 5)
+    return false;
+
+  int maxsides = left;
+  if (diff < -15) {
+    maxsides = right;
+    *towards = RIGHT;
+//    Serial.println("turn right");
+  } else if (diff > 15) {
+    *towards = LEFT;
+//    Serial.printlnSerial.print(left);
+//  Serial.print(" ");
+//  Serial.print(right);
+//  Serial.print(" ");
+//  Serial.print("diff: ");
+//  Serial.print(diff);
+//  Serial.print(" ");("turn left");
+  } else {
+//    Serial.println("don't turn");
+  }
+
+  if ((forward - maxsides) > 50) {
+    *towards = TURN_UNKNOWN;
+  }
+
+//  Serial.println("");
+  return true;
+  //return sr_distance(&head->eyes);
+}
+
 void motor_set_speed(motor_t *motor, int speed) {
   motor->speed = speed;
   analogWrite(motor->en, motor->speed);
@@ -259,6 +318,7 @@ void motor_set_direction(motor_t *motor, enum dir_t dir) {
   bool forward = (dir == FORWARD);
   digitalWrite(motor->a,forward?HIGH:LOW);
   digitalWrite(motor->b,forward?LOW:HIGH);
+//  Serial.println("go forward");
 }
 
 void setup_motor(motor_t *motor) {
@@ -277,10 +337,12 @@ void turn(turn_t towards) {
     case LEFT:
       motor_set_speed(&left, 0);
       motor_set_speed(&right, turn_speed);
+//      Serial.println("go left");
     break;
     case RIGHT:
     motor_set_speed(&right, 0);
     motor_set_speed(&left, turn_speed);
+//    Serial.println("go right");
     break;
   }
 }
@@ -344,6 +406,25 @@ bool is_blocked(long dis) {
 
 bool can_turn(long dis) {
   return (dis >=20 && dis <= MAX_DISTANCE);
+}
+
+
+void do_light_action(robot_t *robot) {
+  stopit();
+  turn_t towards;
+  bool start = head_find_light(&robot->head, &towards);
+  if (start) {
+    if (towards != TURN_UNKNOWN) {
+      turn(towards);
+      delay(500);
+    } else {
+      set_direction(FORWARD);
+      delay(1000);
+    }
+  } else {
+    robot->function = FUNCTION_REMOTE;
+//    delay(5000);
+  }
 }
 
 void do_eyes_action(robot_t *robot) {
@@ -426,8 +507,9 @@ void loop() {
 //  Serial.println(dis);
 //  return;
 //
-// turn(RIGHT);
+// turn(LEFT);
 //  stopit();
+//  set_direction(FORWARD);
 //  return;
 
   BUTTON_T buttonpress = remote_read_button(&tvremote);
@@ -463,11 +545,18 @@ void loop() {
       robot.time_since_turn = 0;
       robot.function = FUNCTION_EYES_CIRCLE;
       set_direction(FORWARD);
+      break;
+    case NUM_3:
+      robot.turning = TURN_UNKNOWN;
+      robot.function = FUNCTION_FOLLOW_LIGHT;
+      break;
   }
 
   if (robot.function == FUNCTION_EYES
         || robot.function == FUNCTION_EYES_CIRCLE) {
-    do_eyes_action(&robot);  
+    do_eyes_action(&robot);
+  } else if (robot.function == FUNCTION_FOLLOW_LIGHT) {
+    do_light_action(&robot);
   } else {
     do_remote_action(buttonpress);
   }
